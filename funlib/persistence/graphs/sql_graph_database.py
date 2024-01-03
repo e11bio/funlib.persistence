@@ -153,6 +153,7 @@ class SQLGraphDataBase(GraphDataBase):
                 edge_list = [(e[u], e[v], self.__remove_keys(e, [u, v])) for e in edges]
             except KeyError as e:
                 raise ValueError(edges[:5]) from e
+
             graph.add_edges_from(edge_list)
         return graph
 
@@ -276,6 +277,14 @@ class SQLGraphDataBase(GraphDataBase):
         # TODO: can be made more efficient
         return len(self.read_edges(roi)) > 0
 
+    def _bytes_to_int(self, value):
+        """Helper function to convert bytes object to int."""
+
+        if isinstance(value, bytes):
+            value = int.from_bytes(value, byteorder="little")
+
+        return value
+
     def read_edges(
         self,
         roi: Optional[Roi] = None,
@@ -316,7 +325,7 @@ class SQLGraphDataBase(GraphDataBase):
 
         edges = [
             {
-                key: val
+                key: self._bytes_to_int(val)
                 for key, val in zip(
                     self.endpoint_names + list(self.edge_attrs.keys()), values
                 )
@@ -353,6 +362,12 @@ class SQLGraphDataBase(GraphDataBase):
 
         values = []
         for (u, v), data in edges.items():
+            u = self._bytes_to_int(u)
+            v = self._bytes_to_int(v)
+
+            # logger.info(f"u: {u}, {type(u)}")
+            # logger.info(f"v: {v}, {type(v)}")
+
             if not self.directed:
                 u, v = min(u, v), max(u, v)
             pos_u = self.__get_node_pos(nodes[u])
@@ -441,6 +456,7 @@ class SQLGraphDataBase(GraphDataBase):
 
         values = []
         for node_id, data in nodes.items():
+            logger.debug(f"NODE ID: {node_id}, DATA: {data}")
             data = data.copy()
             pos = self.__get_node_pos(data)
             if roi is not None and not roi.contains(pos):
@@ -456,7 +472,9 @@ class SQLGraphDataBase(GraphDataBase):
             logger.debug("No nodes to insert in %s", roi)
             return
 
-        self._insert_query(self.nodes_table_name, columns, values, fail_if_exists=True)
+        self._insert_query(
+            self.nodes_table_name, columns, values, fail_if_exists=fail_if_exists
+        )
 
     def update_nodes(
         self,

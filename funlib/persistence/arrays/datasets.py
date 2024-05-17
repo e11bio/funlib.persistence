@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import shutil
+import numpy as np
 from typing import Optional, Union, Sequence
 
 logger = logging.getLogger(__name__)
@@ -198,14 +199,41 @@ def check_for_attrs_multiscale(ds, multiscale_group, multiscales):
                     return voxel_size, offset, units
         # for zarr store
         else:
-            units = [item["unit"] for item in multiscales[0]["axes"]]
+            units = [item["unit"] for item in multiscales[0]["axes"] if "unit" in item]
+
+            for attr in multiscales[0]["datasets"][0]["coordinateTransformations"]:
+                if "translation" in attr["type"]:
+                    offset = attr["translation"]
+
             for level in multiscales[0]["datasets"]:
                 if level["path"].lstrip("/") == scale:
                     for attr in level["coordinateTransformations"]:
-                        if attr["type"] == "scale":
+                        if "scale" in attr["type"]:
                             voxel_size = attr["scale"]
-                        elif attr["type"] == "translation":
+
+                            # assuming 1st dim is channel dim
+                            if len(units) == len(voxel_size) - 1:
+                                voxel_size = voxel_size[1:]
+
+                            # assuming micrometers so scaling to nanometers
+                            voxel_size = [
+                                v * 1000 if u == "micrometer" else v
+                                for v, u in zip(voxel_size, units)
+                            ]
+
+                        if "translation" in attr["type"]:
+                            # take offset directly from level in meta
                             offset = attr["translation"]
+
+                        if offset is not None:
+                            # assuming 1st dim is channel dim
+                            if len(units) == len(offset) - 1:
+                                offset = offset[1:]
+
+                            # assuming offset is in physical units so scaling to
+                            # world units
+                            offset = [v * o for v, o in zip(offset, voxel_size)]
+
                     return voxel_size, offset, units
 
     return voxel_size, offset, units
@@ -267,7 +295,6 @@ def _read_attrs(ds, order="C"):
         isinstance(ds.store, (zarr.n5.N5Store, zarr.n5.N5FSStore))
         and multiscales != False
     ):
-
         voxel_size, offset, units = check_for_attrs_multiscale(
             ds, multiscale_group, multiscales
         )
@@ -303,6 +330,7 @@ def regularize_offset(voxel_size_float, offset_float):
     Returns:
         (Coordinate, Coordinate)): returned offset size that is multiple of voxel size
     """
+
     voxel_size, offset = Coordinate(voxel_size_float), Coordinate(offset_float)
 
     if voxel_size is not None and (offset / voxel_size) * voxel_size != offset:
